@@ -3,15 +3,14 @@ const admin = require("firebase-admin");
 
 admin.initializeApp(functions.config().functions);
 
-exports.notifyNewMessage = functions.firestore.document("/messages/{id}")
+exports.notifyNewMessage = functions.firestore.document("/messages/{docId}/userMessages/{id}")
     .onCreate((docSnapshot, context) => {
         const message = docSnapshot.data();
-        const title = message["title"];
-        const body = message["body"] || "";
-        const photoUrl = message["photoUrl"] || "";
-        const senderId = message["senderId"];
-        const receiverId = message["receiverId"];
-        const seen = message["seen"] || "0";
+        const title = message["professionalName"];
+        const body = message["message"] || "";
+        const photoUrl = message["professionalPhotoUrl"] || "";
+        const senderId = message["professionalEmail"];
+        const receiverId = message["userEmail"];
         const id = docSnapshot.id
 
     return admin
@@ -22,12 +21,11 @@ exports.notifyNewMessage = functions.firestore.document("/messages/{id}")
         const registrationTokens = userDoc.get("deviceTokens");
         const payload = {
             notification: {
-                title: title,
+                title: `${title} te ha enviado un mensaje.`,
                 body: body,
                 image: photoUrl,
             },
             data: {
-                seen: `${seen}`,
                 date: `${new Date().toISOString()}`,
                 photoUrl,
                 senderId,
@@ -66,6 +64,74 @@ exports.notifyNewMessage = functions.firestore.document("/messages/{id}")
             return admin
               .firestore()
               .doc("users/" + receiverId)
+              .update({
+                deviceTokens: stillRegisteredTokens,
+              });
+          });
+      });
+  });
+
+exports.notifyNewMessageProfessional = functions.firestore.document("/messages/{docId}/userMessages/{id}")
+    .onCreate((docSnapshot, context) => {
+        const message = docSnapshot.data();
+        const title = message["userName"];
+        const body = message["message"] || "";
+        const photoUrl = message["userPhotoUrl"] || "";
+        const senderId = message["userEmail"];
+        const receiverId = message["professionalEmail"];
+        const id = docSnapshot.id
+
+    return admin
+      .firestore()
+      .doc("professionals/" + receiverId)
+      .get()
+      .then((userDoc) => {
+        const registrationTokens = userDoc.get("deviceTokens");
+        const payload = {
+            notification: {
+                title: `${title} te ha enviado un mensaje.`,
+                body: body,
+                image: photoUrl,
+            },
+            data: {
+                date: `${new Date().toISOString()}`,
+                photoUrl,
+                senderId,
+                receiverId,
+                documentId: id
+            },
+        };
+
+        return admin
+          .messaging()
+          .sendToDevice(registrationTokens, payload)
+          .then((response) => {
+            const stillRegisteredTokens = registrationTokens;
+
+            response.results.forEach((result, index) => {
+              const error = result.error;
+              if (error) {
+                const failedRegistrationToken = registrationTokens[index];
+                console.error(
+                  `Ha ocurrido un error al registrar el token de usuarios: ${failedRegistrationToken} ${error}`
+                );
+                if (
+                  error.code === "messaging/invalid-registration-token" ||
+                  error.code ===
+                    "messaging/invalid-registration-token-not-registered"
+                ) {
+                  const failedIndex = stillRegisteredTokens.indexOf(
+                    failedRegistrationToken
+                  );
+                  if (failedIndex > -1) {
+                    stillRegisteredTokens.splice(failedIndex, 1);
+                  }
+                }
+              }
+            });
+            return admin
+              .firestore()
+              .doc("professionals/" + receiverId)
               .update({
                 deviceTokens: stillRegisteredTokens,
               });
