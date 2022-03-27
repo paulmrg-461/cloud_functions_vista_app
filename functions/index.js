@@ -8,7 +8,7 @@ exports.notifyNewMessage = functions.firestore.document("/messages/{docId}/userM
         const message = docSnapshot.data();
         const title = message["professionalName"];
         const body = message["message"] || "";
-        const photoUrl = message["professionalPhotoUrl"] || "";
+        const photoUrl = (body === "Imagen" || body === "Imagen tomada") ? message["downloadUrl"] : "";
         const senderId = message["professionalEmail"];
         const receiverId = message["userEmail"];
         const id = docSnapshot.id
@@ -76,7 +76,7 @@ exports.notifyNewMessageProfessional = functions.firestore.document("/messages/{
         const message = docSnapshot.data();
         const title = message["userName"];
         const body = message["message"] || "";
-        const photoUrl = message["userPhotoUrl"] || "";
+        const photoUrl = (body === "Imagen" || body === "Imagen tomada") ? message["downloadUrl"] : "";
         const senderId = message["userEmail"];
         const receiverId = message["professionalEmail"];
         const id = docSnapshot.id
@@ -221,6 +221,76 @@ exports.notifyNewRequest = functions.firestore.document("/serviceRequests/{id}")
       .firestore()
       .collection("professionals")
       .where('profession','==',type)
+      .get()
+      .then((professionalDocs) => {
+        professionalDocs.forEach((pd, index) => {
+          const registrationTokens = pd.get("deviceTokens");
+          const payload = {
+              notification: {
+                  title: `${clientName} solicita un servicio.`,
+                  body: `${clientName} ha solicitado un servicio de ${type} en el Grupo Vista.`,
+                  image: photoUrl,
+              },
+              data: {
+                  date: `${new Date().toISOString()}`,
+                  photoUrl,
+                  senderId,
+                  type,
+                  documentId: id
+              },
+          };
+  
+          return admin
+            .messaging()
+            .sendToDevice(registrationTokens, payload)
+            .then((response) => {
+              const stillRegisteredTokens = registrationTokens;
+  
+              response.results.forEach((result, index) => {
+                const error = result.error;
+                if (error) {
+                  const failedRegistrationToken = registrationTokens[index];
+                  console.error(
+                    `Ha ocurrido un error al registrar el token de usuarios: ${failedRegistrationToken} ${error}`
+                  );
+                  if (
+                    error.code === "messaging/invalid-registration-token" ||
+                    error.code ===
+                      "messaging/invalid-registration-token-not-registered"
+                  ) {
+                    const failedIndex = stillRegisteredTokens.indexOf(
+                      failedRegistrationToken
+                    );
+                    if (failedIndex > -1) {
+                      stillRegisteredTokens.splice(failedIndex, 1);
+                    }
+                  }
+                }
+              });
+              return admin
+                .firestore()
+                .doc("professionals/" + pd.get("email"))
+                .update({
+                  deviceTokens: stillRegisteredTokens,
+                });
+            });
+        });
+      });
+  });
+
+exports.notifyAdminsNewRequest = functions.firestore.document("/serviceRequests/{id}")
+    .onCreate((docSnapshot, context) => {
+        const message = docSnapshot.data();
+        const clientName = message["name"];
+        const photoUrl = message["photoUrl"] || "";
+        const senderId = message["email"];
+        const type = message["type"];
+        const id = docSnapshot.id
+
+    return admin
+      .firestore()
+      .collection("professionals")
+      .where('isAdmin','==',true)
       .get()
       .then((professionalDocs) => {
         professionalDocs.forEach((pd, index) => {
